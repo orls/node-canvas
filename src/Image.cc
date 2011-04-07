@@ -15,6 +15,12 @@
 #include <jpeglib.h>
 #endif
 
+struct simple_buffer_t {
+    int     read;
+    char    *data;
+};
+
+
 Persistent<FunctionTemplate> Image::constructor;
 
 /*
@@ -33,6 +39,7 @@ Image::Initialize(Handle<Object> target) {
   // Prototype
   Local<ObjectTemplate> proto = constructor->PrototypeTemplate();
   proto->SetAccessor(String::NewSymbol("src"), GetSrc, SetSrc);
+  proto->SetAccessor(String::NewSymbol("pngData"), GetPngData, SetPngData);
   proto->SetAccessor(String::NewSymbol("complete"), GetComplete);
   proto->SetAccessor(String::NewSymbol("width"), GetWidth);
   proto->SetAccessor(String::NewSymbol("height"), GetHeight);
@@ -108,6 +115,7 @@ Image::SetSrc(Local<String>, Local<Value> val, const AccessorInfo &info) {
     String::AsciiValue src(val);
     Image *img = ObjectWrap::Unwrap<Image>(info.This());
     if (img->filename) free(img->filename);
+    if (img->pngData) free(img->pngData);
     img->filename = strdup(*src);
     cairo_status_t status = img->load();
     // TODO: this does not work... something funky going on
@@ -119,6 +127,51 @@ Image::SetSrc(Local<String>, Local<Value> val, const AccessorInfo &info) {
     }
   }
 }
+
+/*
+ * Get raw PNG data.
+ */
+
+Handle<Value>
+Image::GetPngData(Local<String>, const AccessorInfo &info) {
+  HandleScope scope;
+  Image *img = ObjectWrap::Unwrap<Image>(info.This());
+  return scope.Close(String::New(reinterpret_cast<const char *>(img->pngData)));
+}
+
+
+/*
+ * Set raw PNG data.
+ */
+
+void
+Image::SetPngData(Local<String>, Local<Value> val, const AccessorInfo &info) {
+  HandleScope scope;
+  if (val->IsString()) {
+    Image *img = ObjectWrap::Unwrap<Image>(info.This());
+    if (img->filename) free(img->filename);
+    if (img->pngData) free(img->pngData);
+    
+    Local<String> s = val->ToString();
+    size_t buflen = s->Length();
+    
+    img->pngData = (char *)malloc(buflen);
+    
+    int written = DecodeWrite(img->pngData, buflen, val, BINARY);
+    
+    cairo_status_t status = img->load();
+    
+    // TODO: this does not work... something funky going on
+    if (status) {
+      img->error(Canvas::Error(status));
+    } else {
+      V8::AdjustAmountOfExternalAllocatedMemory(4 * img->width * img->height);
+      img->loaded();
+    }
+  }
+}
+
+
 
 /*
  * Get onload callback.
@@ -170,6 +223,7 @@ Image::SetOnerror(Local<String>, Local<Value> val, const AccessorInfo &info) {
 
 Image::Image() {
   filename = NULL;
+  pngData = NULL;
   _surface = NULL;
   width = height = 0;
   state = DEFAULT;
@@ -185,6 +239,7 @@ Image::~Image() {
     cairo_surface_destroy(_surface);
   }
   if (filename) free(filename);
+  if (pngData) free(pngData);
 }
 
 /*
@@ -247,25 +302,66 @@ Image::error(Local<Value> err) {
 
 cairo_status_t
 Image::loadSurface() {
-  switch (extension(filename)) {
-    case Image::PNG:
-      return loadPNG();
+  cairo_status_t _status = CAIRO_STATUS_READ_ERROR;
+  if (filename) {
+    switch (extension(filename)) {
+      case Image::PNG:
+        _status = loadPNG();
+        return _status;
 #ifdef HAVE_JPEG
-    case Image::JPEG:
-      return loadJPEG();
+      case Image::JPEG:
+        _status = loadJPEG();
+        return _status;
 #endif
-    default:
-      return CAIRO_STATUS_READ_ERROR;
+      default:
+        return _status;
+    }
   }
+  else if(pngData) {
+    _status = loadPNGData();
+  }
+  return _status;
 }
 
 /*
- * Load PNG.
+ * Load PNG from file
  */
 
 cairo_status_t
 Image::loadPNG() {
   _surface = cairo_image_surface_create_from_png(filename);
+  cairo_status_t status = cairo_surface_status(_surface);
+  if (!status) {
+    width = cairo_image_surface_get_width(_surface);
+    height = cairo_image_surface_get_height(_surface);
+  }
+  return status;
+}
+
+static cairo_status_t
+read_png_from_stream (void *closure, unsigned char *data, unsigned int length) {
+  
+  
+  simple_buffer_t *buffer = reinterpret_cast<simple_buffer_t*>(closure);
+  
+  for (size_t i = 0; i < length; i++) {
+    data[i] = buffer->data[i+buffer->read];
+  }
+  
+  buffer->read += length;
+  
+  return CAIRO_STATUS_SUCCESS;
+}
+
+cairo_status_t
+Image::loadPNGData() {
+  
+  struct simple_buffer_t read_png_closure;
+  read_png_closure.read = 0;
+  read_png_closure.data = pngData;
+  
+  _surface = cairo_image_surface_create_from_png_stream(read_png_from_stream, &read_png_closure);
+  
   cairo_status_t status = cairo_surface_status(_surface);
   if (!status) {
     width = cairo_image_surface_get_width(_surface);

@@ -13,6 +13,7 @@
 class Image: public node::ObjectWrap {
   public:
     char *filename;
+    char *pngData;
     int width, height;
     Persistent<Function> onload;
     Persistent<Function> onerror;
@@ -20,12 +21,14 @@ class Image: public node::ObjectWrap {
     static void Initialize(Handle<Object> target);
     static Handle<Value> New(const Arguments &args);
     static Handle<Value> GetSrc(Local<String> prop, const AccessorInfo &info);
+    static Handle<Value> GetPngData(Local<String> prop, const AccessorInfo &info);
     static Handle<Value> GetOnload(Local<String> prop, const AccessorInfo &info);
     static Handle<Value> GetOnerror(Local<String> prop, const AccessorInfo &info);
     static Handle<Value> GetComplete(Local<String> prop, const AccessorInfo &info);
     static Handle<Value> GetWidth(Local<String> prop, const AccessorInfo &info);
     static Handle<Value> GetHeight(Local<String> prop, const AccessorInfo &info);
     static void SetSrc(Local<String> prop, Local<Value> val, const AccessorInfo &info);
+    static void SetPngData(Local<String> prop, Local<Value> val, const AccessorInfo &info);
     static void SetOnload(Local<String> prop, Local<Value> val, const AccessorInfo &info);
     static void SetOnerror(Local<String> prop, Local<Value> val, const AccessorInfo &info);
     inline cairo_surface_t *surface(){ return _surface; } 
@@ -33,6 +36,8 @@ class Image: public node::ObjectWrap {
     inline int stride(){ return cairo_image_surface_get_stride(_surface); } 
     cairo_status_t loadSurface();
     cairo_status_t loadPNG();
+    cairo_status_t loadPNGData();
+    
 #ifdef HAVE_JPEG
     cairo_status_t loadJPEG();
 #endif
